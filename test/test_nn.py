@@ -4287,19 +4287,6 @@ class TestNN(NNTestCase):
             self.assertEqual(len(w), 1)
             self.assertIn('Please ensure they have the same size.', str(w[0]))
 
-    def test_nll_loss_mismatched_batch(self):
-        x = torch.randn((10, 3), requires_grad=True)
-        # t should have size (10,)
-        t = torch.zeros((3,), dtype=torch.int64)
-        with self.assertRaisesRegex(ValueError, 'Expected.*batch_size'):
-            F.nll_loss(x, t)
-
-    def test_nll_loss_out_of_bounds_ignore_index(self):
-        x = torch.randn(6, 3, requires_grad=True)
-        t = torch.tensor([0, 1, 255, 0, 1, 2], dtype=torch.int64)
-        for reduction in ['mean', 'none']:
-            F.nll_loss(x, t, ignore_index=255, reduction=reduction).sum().backward()
-
     def test_poisson_nll_loss_reduction_modes(self):
         input = torch.tensor([0.5, 1.5, 2.5])
         target = torch.tensor([1., 2., 3.])
@@ -10425,6 +10412,54 @@ class TestNNDeviceType(NNTestCase):
         self.assertRaises(RuntimeError,
                           lambda: nn.functional.multi_margin_loss(torch.randn(5, device=device),
                                                                   torch.zeros(3, device=device)))
+
+    def test_nll_loss_mismatched_batch(self, device):
+        x = torch.randn((10, 3), requires_grad=True, device=device)
+        # t should have size (10,)
+        t = torch.zeros((3,), dtype=torch.int64, device=device)
+        with self.assertRaisesRegex(ValueError, 'Expected.*batch_size'):
+            F.nll_loss(x, t)
+
+    def test_nll_loss_out_of_bounds_ignore_index(self, device):
+        x = torch.randn(6, 3, requires_grad=True, device=device)
+        t = torch.tensor([0, 1, 255, 0, 1, 2], dtype=torch.int64, device=device)
+        for reduction in ['mean', 'none']:
+            F.nll_loss(x, t, ignore_index=255, reduction=reduction).sum().backward()
+
+    def test_nll_loss_empty_tensor(self, device):
+
+        def test_nll_loss(x, target):
+            for reduction in ['none', 'mean', 'sum']:
+                y = F.nll_loss(x, target, reduction=reduction)
+                if reduction == 'none':
+                    self.assertTrue(y.size() == target.size())
+                else:
+                    self.assertEqual(y.dim(), 0)
+                    if reduction == 'sum':
+                        self.assertEqual(y.item(), 0)
+                    else: # reduction == 'mean':
+                        math.isnan(y.item())
+                y.sum().backward()
+                self.assertEqual(x.grad.size(), x.size())
+
+        C = 10
+
+        N = 0
+        x = torch.rand(N, C, requires_grad=True, device=device)
+        target = torch.randint(C, (N,), device=device)
+        test_nll_loss(x, target)
+
+        # 2-D scenarios
+        for N in [0, 10]:
+            for H in [0, 10]:
+                for W in [0, 10]:
+                    if (N * C * H * W == 0): # If input is empty
+                        x = torch.rand(N, C, H, W, requires_grad=True, device=device)
+                        if C != 0:
+                            target = torch.randint(C, (N, H, W), device=device)
+                        else:
+                            target = torch.empty((N, H, W), dtype=torch.int64, device=device)
+                        test_nll_loss(x, target)
 
 instantiate_device_type_tests(TestNNDeviceType, globals())
 
