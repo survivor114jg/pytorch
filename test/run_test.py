@@ -14,7 +14,7 @@ import tempfile
 import torch
 import torch._six
 from torch.utils import cpp_extension
-from common_utils import TEST_WITH_ROCM, shell
+from torch.testing._internal.common_utils import TEST_WITH_ROCM, shell
 import torch.distributed as dist
 PY33 = sys.version_info >= (3, 3)
 PY36 = sys.version_info >= (3, 6)
@@ -27,6 +27,7 @@ TESTS = [
     'cuda',
     'cuda_primary_ctx',
     'dataloader',
+    'data_parallel',
     'distributed',
     'distributions',
     'docs_coverage',
@@ -71,6 +72,7 @@ if PY33:
     TESTS.extend([
         'rpc_spawn',
         'dist_autograd_spawn',
+        'dist_optimizer_spawn',
     ])
 
 # skip < 3.6 b/c fstrings added in 3.6
@@ -140,6 +142,7 @@ def run_test(executable, test_module, test_directory, options, *extra_unittest_a
     # Can't call `python -m unittest test_*` here because it doesn't run code
     # in `if __name__ == '__main__': `. So call `python test_*.py` instead.
     argv = [test_module + '.py'] + unittest_args + list(extra_unittest_args)
+
     command = executable + argv
     return shell(command, test_directory)
 
@@ -412,6 +415,16 @@ def get_selected_tests(options):
 
     return selected_tests
 
+def find_test_file(test_name, test_directory):
+    test_file_name = '{}.py'.format(test_name)
+    for root, dirs, files in os.walk(test_directory):
+        for file in files:
+            if file == test_file_name:
+                abspath = os.path.join(root, file)
+                return os.path.relpath(abspath, test_directory)
+
+    raise Exception('Could not find test file for: {}'.format(test_name))
+
 
 def main():
     options = parse_args()
@@ -431,12 +444,14 @@ def main():
 
     for test in selected_tests:
         test_name = 'test_{}'.format(test)
-        test_module = parse_test_module(test)
+        test_file = find_test_file(test_name, test_directory)
+
+        test_module = parse_test_module(test_file)
 
         # Printing the date here can help diagnose which tests are slow
         print_to_stderr('Running {} ... [{}]'.format(test_name, datetime.now()))
-        handler = CUSTOM_HANDLERS.get(test_module, run_test)
-        return_code = handler(executable, test_name, test_directory, options)
+        handler = CUSTOM_HANDLERS.get(test, run_test)
+        return_code = handler(executable, test_module, test_directory, options)
         assert isinstance(return_code, int) and not isinstance(
             return_code, bool), 'Return code should be an integer'
         if return_code != 0:
